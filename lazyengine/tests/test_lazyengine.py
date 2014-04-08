@@ -22,13 +22,13 @@ Tests for `lazyengine` module.
 import logging
 import time
 
+from lazyengine import controller
+from lazyengine import example_utils
 from lazyengine.tests import base
-from lazyengine import manager
 
 from taskflow.openstack.common import uuidutils
 from taskflow.patterns import linear_flow as flow
-from taskflow.persistence.logbook import FlowDetail
-
+from taskflow.persistence.logbook import FlowDetail as Execution
 from taskflow import states
 from taskflow import task
 
@@ -49,6 +49,8 @@ def two(one):
 
 
 def three(two):
+    # Assuming task won't finish when it returns None.
+    # TODO(enykeev): Address this assumption in code
     pass
 
 
@@ -61,28 +63,68 @@ fl = flow.Flow('some').add(
 
 class TestLazyEngine(base.TestCase):
 
+    # I'm relying on Tox to run all the tests as a separate process at the same
+    # time and I'm trying to set an order of execution using time.sleep, though
+    # I'm not sure it would act the same way when there will be more than a few
+    # tests.
     def test_start_manager1(self):
-        execution = FlowDetail(fl.name, manager1uuid)
-        manager.start(fl, execution)
+        execution = Execution(fl.name, manager1uuid)
+
+        controller.start(fl, execution)
+
+        self.assertEqual(controller.get_state(execution), states.RUNNING)
 
     def test_start_manager2(self):
-        execution = FlowDetail(fl.name, manager2uuid)
-        manager.start(fl, execution)
+        execution = Execution(fl.name, manager2uuid)
+
+        controller.start(fl, execution)
+
+        self.assertEqual(controller.get_state(execution), states.RUNNING)
 
     def test_stop_manager1(self):
         time.sleep(1.5)
-        manager.stop(manager1uuid)
+        # Isn't it a bit complicated for such a simple task?
+        with example_utils.get_backend() as backend:
+            conn = backend.get_connection()
+            # I don't really see a point of logbook and would prefer to be able
+            # to get flow_details directly, though I'm interested to hear TF
+            # team on the matter.
+            execution = conn.get_flow_details(manager1uuid)
+
+        controller.stop(execution)
+
+        self.assertEqual(controller.get_state(execution), states.SUSPENDING)
 
     def test_intermediate_results(self):
         time.sleep(3)
-        self.assertEqual(manager.get_state(manager1uuid), states.SUSPENDED)
-        self.assertEqual(manager.get_state(manager2uuid), states.RUNNING)
+        with example_utils.get_backend() as backend:
+            conn = backend.get_connection()
+            execution1 = conn.get_flow_details(manager1uuid)
+            execution2 = conn.get_flow_details(manager2uuid)
+
+        self.assertEqual(controller.get_state(execution1), states.SUSPENDED)
+        self.assertEqual(controller.get_state(execution2), states.RUNNING)
 
     def test_long_running(self):
         time.sleep(4)
-        manager.complete_task(manager1uuid, 'three', 'three')
+        with example_utils.get_backend() as backend:
+            conn = backend.get_connection()
+            execution = conn.get_flow_details(manager2uuid)
+
+        self.assertEqual(controller.get_state(execution), states.RUNNING)
+
+        # Instead of task name (second arg) we should probably send its id. We
+        # need to figure out how to retrieve it for the sake of the test.
+        controller.complete_task(execution, 'three', 'three')
+
+        self.assertEqual(controller.get_state(execution), states.SUCCESS)
 
     def test_results(self):
         time.sleep(5)
-        self.assertEqual(manager.get_state(manager1uuid), states.SUSPENDED)
-        self.assertEqual(manager.get_state(manager2uuid), states.SUCCESS)
+        with example_utils.get_backend() as backend:
+            conn = backend.get_connection()
+            execution1 = conn.get_flow_details(manager1uuid)
+            execution2 = conn.get_flow_details(manager2uuid)
+
+        self.assertEqual(controller.get_state(execution1), states.SUSPENDED)
+        self.assertEqual(controller.get_state(execution2), states.SUCCESS)
