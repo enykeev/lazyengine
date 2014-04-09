@@ -21,9 +21,17 @@ def start(flow, execution=None):
     #
     # compile() -> ensure_task()
     #
-    #  ...
+    # ...
     #
-    # schedule(get_next_nodes())
+    # schedule(get_next_nodes()) ->
+    # _execute_task(execution, task, arguments, progress_callback):
+    #     with task.autobind('update_progress', progress_callback):
+    #         try:
+    #             result = task.execute(**arguments)
+    #         except Exception:
+    #             result = misc.Failure()
+    #     if result:
+    #         manager.complete_task(execution, task, result)
     #
     # ...
     #

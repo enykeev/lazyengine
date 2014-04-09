@@ -50,7 +50,6 @@ def two(one):
 
 def three(two):
     # Assuming task won't finish when it returns None.
-    # TODO(enykeev): Address this assumption in code
     pass
 
 
